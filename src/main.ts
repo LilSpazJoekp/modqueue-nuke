@@ -12,6 +12,7 @@ import {
     RedditAPIClient,
     SettingScope,
     Subreddit,
+    TriggerContext,
     User,
 } from "@devvit/public-api";
 
@@ -55,11 +56,39 @@ Devvit.configure({
 
 Devvit.addSettings([
     {
-        defaultValue: 3,
-        label: "Retry Limit",
-        name: "retryLimit",
-        scope: SettingScope.App,
-        type: "number",
+        type: "group",
+        label: "General Settings",
+        fields: [
+            {
+                defaultValue: 3,
+                label: "Retry Limit",
+                name: "retryLimit",
+                scope: SettingScope.App,
+                type: "number",
+            },        
+        ],
+    },
+    {
+        type: "group",
+        label: "Mod action settings",
+        fields: [
+            {
+                defaultValue: false,
+                label: "Nuke queued items on post removal",
+                helpText: "If a post is removed, all comments on that post that are in the modqueue will be removed as well.",
+                name: "nukeOnPostRemove",
+                scope: SettingScope.App,
+                type: "boolean",
+            },
+            {
+                defaultValue: false,
+                label: "Nuke queued items on post lock",
+                helpText: "If a post is locked, all comments on that post that are in the modqueue will be removed as well.",
+                name: "nukeOnPostLock",
+                scope: SettingScope.App,
+                type: "boolean",
+            },
+        ],
     },
 ]);
 
@@ -499,7 +528,7 @@ async function scanModqueue(event: FormOnSubmitEvent<JSONObject>, context: Conte
         await subreddit.getModerators().all()
     ).map((moderator) => moderator.username);
     try {
-        const listings = [];
+        const listings: Promise<ModqueueItem[]>[] = [];
         let commentModqueue = subreddit.getModQueue({type: "comment"});
         let commentItems: Promise<ModqueueItem[]> = commentModqueue.all();
         let postModqueue = subreddit.getModQueue({type: "post"});
@@ -831,6 +860,149 @@ function addToNuke(
         {name: "Posts", count: postCount},
         {name: "Comments", count: commentCount},
     )}`;
+}
+
+Devvit.addTrigger({
+    event: "ModAction",
+    onEvent: async (event, context) => {
+        if (event.action === "removelink" || event.action === "spamlink") {
+            const target = event.targetPost?.id;
+            if (!target) {
+                console.log("No target post id found - not removing comments");
+                return;
+            }
+
+            if (!context.settings.get<boolean>("nukeOnRemove")) {
+                console.log("Nuke on remove is disabled - not removing comments");
+                return;
+            }
+
+            await handleNukeOnRemoveOrLock(target, "remove", context);
+        } else if (event.action === "lock") {
+            if (event.targetComment?.id) {
+                console.log("Lock action on comment - not removing comments");
+                return;
+            }
+            const target = event.targetPost?.id;
+            if (!target) {
+                console.log("No target post id found - not removing comments");
+                return;
+            }
+
+            if (!context.settings.get<boolean>("nukeOnLock")) {
+                console.log("Nuke on lock is disabled - not removing comments");
+                return;
+            }
+
+            await handleNukeOnRemoveOrLock(target, "lock", context);
+        }
+    },
+});
+
+Devvit.addSchedulerJob({
+    name: "nukeModQueue",
+    onRun: async (event, context) => {
+        const redisKey = event.data?.redisKey as string | undefined;
+        if (!redisKey) {
+            console.log("No redis key found - not removing comments");
+            return;
+        }
+
+        const currentAttempt = event.data?.attempt as number || 1;
+        const commentsToRemove = await context.redis.zRange(redisKey, 0, -1);
+        if (commentsToRemove.length === 0) {
+            console.log(`No comments to remove in the nuke queue on run ${currentAttempt}`);
+            await context.redis.del(redisKey);
+            return;
+        }
+
+        const retryCount = await context.settings.get<number>("retryLimit") || 3;
+
+        if (currentAttempt < retryCount) {
+            // Schedule the next attempt for one minute in the future in case this one fails.
+            await context.scheduler.runJob({
+                name: "nukeModQueue",
+                runAt: new Date(Date.now() + 60_000),
+                data: { 
+                    redisKey,
+                    attempt: currentAttempt + 1 
+                },
+            });
+        }
+
+        const results = await Promise.all(commentsToRemove.map(async comment => {
+            try {
+                await context.reddit.remove(comment.member, false);
+                await context.redis.zRem(redisKey, [comment.member]);
+                return true;
+            } catch (e) {
+                console.error(`Failed to remove comment ${comment.member} - ${e}`);
+                return false;
+            }
+        }));
+
+        console.log(`Removed ${results.filter(result => result).length} comments from the modqueue`);
+
+        if (results.every(result => result)) {
+            console.log(`All comments removed from the modqueue - deleting redis key ${redisKey}`);
+            await context.redis.del(redisKey);
+        }
+    }
+})
+
+async function handleNukeOnRemoveOrLock (target: string, type: "lock" | "remove", context: TriggerContext) {
+    // A post may be locked and removed in quick succession (e.g. via Toolbox). Use Redis to ensure that we only do it once.
+    const redisKey = `nukeLock:${target}`
+    if (await context.redis.exists(redisKey)) {
+        return;
+    }
+    await context.redis.set(redisKey, "true", { expiration: new Date(Date.now() + 10_000) });
+
+    const subredditName = context.subredditName ?? await context.reddit.getCurrentSubredditName();
+
+    if (type === "remove") {
+        // A "removelink" action may also include an AutoMod/Reddit filter event. We don't want to nuke in those cases.
+        const queuedPosts = await context.reddit.getModQueue({
+            subreddit: subredditName,
+            type: "post",
+            limit: 1000,
+        }).all();
+    
+        if (queuedPosts.some(item => item.id === target)) {
+            // The post itself is in the queue i.e. has been filtered and not removed.
+            await context.redis.del(redisKey);
+            console.log(`Post ${target} is in the modqueue - not removing comments`);
+            return;
+        }    
+    }
+
+    const queuedComments = await context.reddit.getModQueue({
+        subreddit: subredditName,
+        type: "comment",
+        limit: 1000,
+    }).all();
+
+    const queuedCommentsForThisPost = queuedComments.filter(item => item.postId === target);
+    if (queuedCommentsForThisPost.length === 0) {
+        // Nothing to do - there are no comments on this post in the modqueue.
+        await context.redis.del(redisKey);
+        console.log(`No comments in the modqueue for post ${target} - not removing comments`);
+        return;
+    }
+
+    const queueRedisKey = `nukeQueue:${target}`;
+
+    await context.redis.zAdd(queueRedisKey, ...queuedCommentsForThisPost.map(comment => ({ member: comment.id, score: 0 })));
+    await context.scheduler.runJob({
+        name: "nukeModQueue",
+        runAt: new Date(Date.now() + 1000),
+        data: { 
+            redisKey: queueRedisKey,
+            attempt: 1 
+        },
+    });
+
+    console.log(`Queued ${queuedCommentsForThisPost.length} comments for removal from the modqueue for post ${target}`);
 }
 
 // noinspection JSUnusedGlobalSymbols
