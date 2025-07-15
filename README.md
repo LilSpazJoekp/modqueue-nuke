@@ -60,6 +60,11 @@ the [GitHub page](https://github.com/LilSpazJoekp/Modqueue-Nuke).
 
 ## Changes
 
+### 1.3.2
+
+- Updated devvit version.
+- Fixed a bug when specifying an item limit when scanning the modqueue was ignored.
+
 ### 1.3.1
 
 - Update devvit version for vulnerability fix.

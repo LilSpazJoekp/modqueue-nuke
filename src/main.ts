@@ -477,6 +477,7 @@ async function scanModqueue(event: FormOnSubmitEvent<JSONObject>, context: Conte
         ignorePreviouslyApproved,
         reapprovePreviouslyApproved,
         ignoreReportsPreviouslyApproved,
+        scanLimit,
     } = event.values;
     if (itemType == undefined) {
         ui.showToast({
@@ -500,9 +501,13 @@ async function scanModqueue(event: FormOnSubmitEvent<JSONObject>, context: Conte
     ).map((moderator) => moderator.username);
     try {
         const listings = [];
-        let commentModqueue = subreddit.getModQueue({type: "comment"});
+        let additionalParams = {};
+        if (scanLimit && scanLimit as number > 0) {
+            additionalParams = {limit: scanLimit};
+        }
+        let commentModqueue = subreddit.getModQueue({type: "comment", ...additionalParams});
         let commentItems: Promise<ModqueueItem[]> = commentModqueue.all();
-        let postModqueue = subreddit.getModQueue({type: "post"});
+        let postModqueue = subreddit.getModQueue({type: "post", ...additionalParams});
         let postItems: Promise<ModqueueItem[]> = postModqueue.all();
         switch ((
             itemType as string[]
