@@ -565,7 +565,7 @@ async function scanModqueue(event: FormOnSubmitEvent<JSONObject>, context: Conte
                         target: item,
                     }) : true,
                     checkAge ? check({
-                        checkFunc: async (target) => target.createdAt.getMilliseconds() <= (
+                        checkFunc: async (target) => target.createdAt.getTime() <= (
                             Date.now() - (
                                 (
                                     minAge as number

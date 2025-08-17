@@ -38,17 +38,18 @@ will only remove items that match **ALL** selected criteria. You can filter by:
   removed.
 - **Re-Approve Previously Approved Items**: If enabled, items that have been previously approved by a moderator will be
   re-approved instead.
-- **Modqueue Scan Limit**: The maximum number of items to scan in the modqueue. Default is 0. Set to 0 to scan as many
-  items as possible items.
+- **Modqueue Scan Limit**: The maximum number of items to scan in the modqueue. The default is 0. Set to 0 to scan as
+  many items as possible. This applies to both posts and comments. As of 2025-07-15, iOS has a stricter timout so it is
+  recommended to set this to 500 or less to avoid issues on iOS.
 
 ## Known Issues
 
 - The "Ignore Visible Items" toggle is not perfect and will err on the side of caution. It is possible that some items
-  that are not visible to users are not removed. If this happens contact my author, u/Lil_SpazJoekp.
-    - Comments that have been filtered by AutoModerator will not be removed by Modqueue Nuke when utilizing the "Ignore
-      Visible Items" filter. This is due to Modqueue Nuke not able to access the necessary data to determine if a
-      comment has been filtered by AutoModerator. Posts that have been filtered are not affected by this limitation. A
-      fix for this should be in the works by Reddit.
+  that are not visible to users are not removed. If this happens, contact my author, u/Lil_SpazJoekp.
+    - Modqueue Nuke will not remove *comments* that have been filtered by AutoModerator when using the "Ignore Visible
+      Items" filter. This is due to Modqueue Nuke not able to access the necessary data to determine if a comment has
+      been filtered by AutoModerator. This limitation does not affect *posts* that have been filtered. A fix for this
+      should be in the works by Reddit.
 - Sometimes Modqueue Nuke will not catch all items in the modqueue. This is likely due to Reddit's API limitations and
   is out of the control of Modqueue Nuke. If this happens, try running the nuke again or contact my author,
   u/Lil_SpazJoekp, if you need additional assistance.
@@ -60,6 +61,10 @@ the [GitHub page](https://github.com/LilSpazJoekp/Modqueue-Nuke).
 
 ## Changes
 
+### 1.3.3
+
+- Fixed a bug where minimum age was not being correctly checked when scanning the modqueue.
+
 ### 1.3.2
 
 - Updated devvit version.
@@ -67,7 +72,7 @@ the [GitHub page](https://github.com/LilSpazJoekp/Modqueue-Nuke).
 
 ### 1.3.1
 
-- Update devvit version for vulnerability fix.
+- Updated devvit version for vulnerability fix.
 
 ### 1.3.0
 
